@@ -1,5 +1,13 @@
 # Chicken Egg Collection Internet-Free Log (CECIL)
-A native Android egg collection tracker with a dark interface, multiple egg types per collection, per-type colours, an all-time total, a week/month/year summary, and week/month/year calendar views. Records are stored in a local SQLite database.
+A native Android egg collection and incubation tracker with a dark interface, chicken breeds with custom egg colours, full HSV colour selection, an all-time total, week/month/year summaries, and week/month/year calendar views. Records are stored in a local SQLite database.
+
+## Pages
+
+Use the hamburger menu in the top bar to switch between:
+
+- **Collections** — egg collection log.
+- **Hatching** — incubation log with started, failed, successful, and aborted outcomes.
+- **Settings** — chicken breeds and HSV egg colours, default calendar view, data summary, clear-all, and app information.
 
 ## Offline and privacy
 
@@ -20,21 +28,26 @@ A native Android egg collection tracker with a dark interface, multiple egg type
 
 ## How to use
 
-- **+ Log Collection** records eggs against the selected date. Type an egg type name (for example `Chicken` or `Duck`) and a quantity for each type; use **+ Add another type** to log several types in one collection.
-- Type names are remembered and suggested as you type. Tap the colour swatch next to a type to choose its colour; choosing a new colour for an existing type updates it everywhere.
-- Tap a day on the calendar to select it. Day tiles show coloured eggs for the types collected that day.
-- Tap a collection in the **Collections** list to change its per-type quantities. Set a quantity to `0` to remove that type; removing every type deletes the collection.
+- Open **Settings** and use **+ Add breed** to create chicken breeds. Enter the breed name and tap the egg to choose its colour with the full HSV picker (saturation/brightness square and hue bar). Tap an existing breed to rename it, change its colour, or delete it. Deleting a breed also removes its entries from existing logs, with a confirmation showing how many logs are affected.
+- **+ Log Collection** records eggs against the selected date. Choose a saved breed and a quantity; use **+ Add another breed** to log several breeds in one collection.
+- Only breeds saved in **Settings** appear when logging a collection or incubation. If no breeds exist yet, the app offers to open Settings.
+- Tap a day on the calendar to select it. Day tiles show coloured eggs for the breeds collected that day.
+- Tap a collection in the **Collections** list to change its per-breed quantities. Set a quantity to `0` to remove that breed, or use **Delete** to remove the whole collection.
 - Long-press a day tile to log a collection directly for that date.
-- Use **Week / Month / Year** to switch calendar layouts and the arrows to move through time. The summary card at the top shows the total and per-type breakdown for the displayed week, month, or year.
+- Open **Hatching** from the hamburger menu and use **+ Log Incubation** to record an incubation. Choose **Incubation started**, **Incubation failed**, **Incubation successful**, or **Incubation aborted**, then choose the breeds and quantities.
+- New incubation logs default to the device's current date and time. Edit the date field to log a past date; future dates are rejected. The time is recorded from the device clock when you save.
+- Tap an incubation log to change its status, date, breeds, or quantities. Use **Delete** to remove the whole log, or set a breed quantity to `0` to remove just that breed.
+- Use **Week / Month / Year** to switch calendar layouts and the arrows to move through time. The summary card at the top shows totals and per-breed breakdowns for the displayed week, month, or year.
 - **Edit date** lets you jump directly to a date using `YYYY-MM-DD`.
-- The all-time and today totals are calculated from every saved collection, so they update automatically when a collection is logged.
+- **Settings** also sets the default Week/Month/Year calendar view, shows collection and incubation counts, and offers **Clear all logs** with confirmation. Breeds and their colours are kept when logs are cleared.
+- Collection and hatching totals update automatically when logs are added, edited, or deleted.
 
 ## Requirements and notes
 
 - Minimum Android version: Android 8.0 (API 26).
 - Java source, no third-party runtime libraries.
-- The current project supports logging and editing collections, egg types with colours, and viewing totals. It does not yet include renaming types outside the log dialog or database export; avoid uninstalling the app if you need to preserve its local records.
-- Existing databases from the first version are upgraded automatically; earlier collections appear as the `Eggs` type.
+- The current project supports chicken breeds with full HSV egg colours, including creating, editing, and deleting breeds, plus logging, editing, and deleting collections and incubation logs. Database export is not included; avoid uninstalling the app if you need to preserve its local records.
+- Existing databases are upgraded automatically. Types created by earlier versions appear as breeds in **Settings** and can be renamed or recoloured. Earlier collections without a breed appear as `Eggs`.
 - This is a source project, not a prebuilt APK. Android Studio builds the APK locally.
 
 ## License

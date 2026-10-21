@@ -1,0 +1,8 @@
+Version 1.0.1
+
+- Add chicken breeds with custom egg colours using a full HSV colour picker.
+- Edit or delete breeds from Settings.
+- Logging now uses only breeds saved in Settings.
+- Added Settings page with default calendar view, data summary, and clear-all.
+- Collection and incubation log rows now show coloured egg icons.
+- New app icon.
