@@ -1,0 +1,18 @@
+CECIL (Chicken Egg Collection Internet-Free Log) is a simple,
+privacy-focused Android app for recording eggs collected from
+your chickens.
+
+FEATURES
+
+• Record multiple egg collection sessions per day.
+• Automatically use your device's local date.
+• View daily egg counts in week, month and year calendar views.
+• Track your all-time egg collection total.
+• Use dark mode for comfortable viewing.
+• Keep records stored locally on your device.
+
+CECIL is designed to work entirely offline. It requires no
+internet connection and no account.
+
+CECIL is free and open-source software licensed under
+GPL-3.0-or-later.
