@@ -1,5 +1,5 @@
 # Chicken Egg Collection Internet-Free Log (CECIL)
-A native Android egg collection and incubation tracker with a dark interface, chicken breeds with custom egg colours, full HSV colour selection, an all-time total, week/month/year summaries, and week/month/year calendar views. Records are stored in a local SQLite database.
+A native Android egg collection and incubation tracker with a dark interface, chicken breeds with custom egg colours, full HSV colour selection, unique per-egg incubation codes, an all-time total, week/month/year summaries, and week/month/year calendar views. Records are stored in a local SQLite database.
 
 ## Pages
 
@@ -34,9 +34,12 @@ Use the hamburger menu in the top bar to switch between:
 - Tap a day on the calendar to select it. Day tiles show coloured eggs for the breeds collected that day.
 - Tap a collection in the **Collections** list to change its per-breed quantities. Set a quantity to `0` to remove that breed, or use **Delete** to remove the whole collection.
 - Long-press a day tile to log a collection directly for that date.
-- Open **Hatching** from the hamburger menu and use **+ Log Incubation** to record an incubation. Choose **Incubation started**, **Incubation failed**, **Incubation successful**, or **Incubation aborted**, then choose the breeds and quantities.
+- Open **Hatching** from the hamburger menu and use **+ Log Incubation** to record an incubation. Choose **Incubation started**, **Incubation failed**, **Incubation successful**, or **Incubation aborted**.
+- When logging **Incubation started**, choose the breeds and quantities. Every egg receives a unique code made from the breed's first letter plus four digits, for example `S0001` for Silkie and `I0001` for Isa Brown. Numbers are unique within each breed, and full code strings never repeat (breeds that share an initial receive different numbers). Codes are shown in the log row.
+- When logging **Incubation failed**, **Incubation successful**, or **Incubation aborted**, search for an egg code or its four-digit number and select the started egg (or eggs) the outcome applies to. The outcome log stores and displays the same code, linking it back to the egg that was started.
 - New incubation logs default to the device's current date and time. Edit the date field to log a past date; future dates are rejected. The time is recorded from the device clock when you save.
-- Tap an incubation log to change its status, date, breeds, or quantities. Use **Delete** to remove the whole log, or set a breed quantity to `0` to remove just that breed.
+- Tap an incubation log to edit it. Started logs can change date, breeds, and quantities; changing quantities adds or removes generated codes. Outcome logs can change status, date, and selected egg codes. **Delete** removes the log; deleting an outcome returns its codes to incubation, while deleting a started log also removes outcome logs linked to its eggs.
+- Only eggs still in incubation appear in outcome code searches. Once an egg has a failed, successful, or aborted outcome, it cannot be selected for another outcome.
 - Use **Week / Month / Year** to switch calendar layouts and the arrows to move through time. The summary card at the top shows totals and per-breed breakdowns for the displayed week, month, or year.
 - **Edit date** lets you jump directly to a date using `YYYY-MM-DD`.
 - **Settings** also sets the default Week/Month/Year calendar view, shows collection and incubation counts, and offers **Clear all logs** with confirmation. Breeds and their colours are kept when logs are cleared.
@@ -46,8 +49,8 @@ Use the hamburger menu in the top bar to switch between:
 
 - Minimum Android version: Android 8.0 (API 26).
 - Java source, no third-party runtime libraries.
-- The current project supports chicken breeds with full HSV egg colours, including creating, editing, and deleting breeds, plus logging, editing, and deleting collections and incubation logs. Database export is not included; avoid uninstalling the app if you need to preserve its local records.
-- Existing databases are upgraded automatically. Types created by earlier versions appear as breeds in **Settings** and can be renamed or recoloured. Earlier collections without a breed appear as `Eggs`.
+- The current project supports chicken breeds with full HSV egg colours, including creating, editing, and deleting breeds, unique incubation egg codes, outcome logs linked by code, and logging/editing/deleting collections and incubation logs. Database export is not included; avoid uninstalling the app if you need to preserve its local records.
+- Existing databases are upgraded automatically. Types created by earlier versions appear as breeds in **Settings** and can be renamed or recoloured. Earlier collections without a breed appear as `Eggs`; earlier started incubation logs are assigned egg codes during the upgrade.
 - This is a source project, not a prebuilt APK. Android Studio builds the APK locally.
 
 ## License

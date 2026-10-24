@@ -30,6 +30,8 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -1215,8 +1217,26 @@ public class MainActivity extends Activity {
         final String name;
         final int color;
         final long count;
+        final long eggCodeId;
         SessionItem(long id, String name, int color, long count) {
+            this(id, name, color, count, 0);
+        }
+        SessionItem(long id, String name, int color, long count, long eggCodeId) {
             this.id = id; this.name = name; this.color = color; this.count = count;
+            this.eggCodeId = eggCodeId;
+        }
+    }
+
+    private static class EggCodeInfo {
+        final long id;
+        final String code;
+        final long breedId;
+        final String breedName;
+        final int color;
+        final String status;
+        EggCodeInfo(long id, String code, long breedId, String breedName, int color, String status) {
+            this.id = id; this.code = code; this.breedId = breedId;
+            this.breedName = breedName; this.color = color; this.status = status;
         }
     }
 
@@ -1236,6 +1256,7 @@ public class MainActivity extends Activity {
         final String logDate;
         final String kind;
         final List<SessionItem> items = new ArrayList<>();
+        final List<String> codes = new ArrayList<>();
         HatchGroup(long createdAt, String logDate, String kind) {
             this.createdAt = createdAt;
             this.logDate = logDate;
@@ -1245,6 +1266,12 @@ public class MainActivity extends Activity {
             long total = 0;
             for (SessionItem item : items) total += item.count;
             return total;
+        }
+        boolean isCodeLog() {
+            for (SessionItem item : items) {
+                if (item.eggCodeId > 0) return true;
+            }
+            return false;
         }
     }
 
@@ -1454,10 +1481,28 @@ public class MainActivity extends Activity {
     }
 
     private View sessionBreakdownView(List<SessionItem> items) {
+        List<SessionItem> shown = new ArrayList<>();
+        for (SessionItem item : items) {
+            int found = -1;
+            for (int i = 0; i < shown.size(); i++) {
+                if (shown.get(i).name.equalsIgnoreCase(item.name)) {
+                    found = i;
+                    break;
+                }
+            }
+            if (found >= 0) {
+                SessionItem old = shown.get(found);
+                shown.set(found, new SessionItem(old.id, old.name, old.color,
+                        old.count + item.count, old.eggCodeId));
+            } else {
+                shown.add(item);
+            }
+        }
+
         LinearLayout out = new LinearLayout(this);
         out.setOrientation(LinearLayout.VERTICAL);
         out.setPadding(0, dp(2), 0, 0);
-        for (SessionItem item : items) {
+        for (SessionItem item : shown) {
             LinearLayout line = horizontal();
             line.setPadding(0, dp(1), 0, dp(1));
             View egg = new View(this);
@@ -1596,9 +1641,12 @@ public class MainActivity extends Activity {
     }
 
     private void confirmDeleteHatchLog(final AlertDialog parent, final HatchGroup log) {
+        String message = log.isCodeLog()
+                ? "This removes the outcome log and returns its egg codes to incubation. This cannot be undone."
+                : "This removes the log, its egg counts, and any outcome logs linked to its eggs. This cannot be undone.";
         new AlertDialog.Builder(this)
                 .setTitle("Delete incubation log?")
-                .setMessage("This removes the log and its egg counts. This cannot be undone.")
+                .setMessage(message)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Delete", (d, which) -> {
                     db.deleteHatchLog(log);
@@ -1634,6 +1682,12 @@ public class MainActivity extends Activity {
         long total = group.total();
         info.addView(text(total + (total == 1 ? " egg" : " eggs") + " · " + dateLabel + " · " + timeLabel(group.createdAt), 12, MUTED, false));
         info.addView(sessionBreakdownView(group.items));
+        if (!group.codes.isEmpty()) {
+            TextView codeView = text("Codes: " + String.join(", ", group.codes), 11, MUTED, false);
+            codeView.setTypeface(Typeface.MONOSPACE);
+            codeView.setPadding(0, dp(2), 0, 0);
+            info.addView(codeView);
+        }
         row.addView(info, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
         TextView edit = text("EDIT", 11, GREEN, true);
@@ -1644,18 +1698,34 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private void pickHatchKind(final String[] selectedKind, final Button kindButton) {
+    private void pickHatchKind(final String[] selectedKind, final Button kindButton, final Runnable after) {
         new AlertDialog.Builder(this)
                 .setTitle("Incubation status")
                 .setItems(HATCH_KINDS, (d, which) -> {
                     selectedKind[0] = HATCH_KINDS[which];
                     kindButton.setText(selectedKind[0]);
+                    after.run();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void pickHatchStatusKind(final String[] selectedKind, final Button kindButton, final Runnable after) {
+        final String[] statuses = {KIND_FAILED, KIND_SUCCESSFUL, KIND_ABORTED};
+        new AlertDialog.Builder(this)
+                .setTitle("Incubation outcome")
+                .setItems(statuses, (d, which) -> {
+                    selectedKind[0] = statuses[which];
+                    kindButton.setText(selectedKind[0]);
+                    after.run();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
     }
 
     private void hatchLogDialog(LocalDate defaultDate, final HatchGroup existing) {
+        final boolean existingStarted = existing != null && KIND_STARTED.equals(existing.kind);
+        final boolean existingStatus = existing != null && !KIND_STARTED.equals(existing.kind);
         final List<EggType> breeds = new ArrayList<>(db.eggTypes());
         if (existing == null && !requireBreeds(breeds)) return;
 
@@ -1663,8 +1733,27 @@ public class MainActivity extends Activity {
         entries.setPadding(dp(8), 0, dp(8), 0);
         final List<BreedRow> rows = new ArrayList<>();
 
-        LinearLayout box = vertical();
-        box.addView(text("Log date (YYYY-MM-DD)", 12, MUTED, true));
+        if (!existingStatus) {
+            if (existingStarted) {
+                for (SessionItem item : existing.items) {
+                    EggType breed = findBreed(breeds, item.name);
+                    if (breed == null) {
+                        breed = new EggType(0, item.name, item.color);
+                        breeds.add(breed);
+                    }
+                    BreedRow row = createBreedRow(rows, entries, breeds);
+                    row.breed = breed;
+                    updateBreedRow(row);
+                    row.qty.setText(String.valueOf(item.count));
+                    rows.add(row);
+                }
+            } else {
+                BreedRow first = createBreedRow(rows, entries, breeds);
+                rows.add(first);
+            }
+            refreshBreedRows(entries, rows);
+        }
+
         final EditText dateInput = new EditText(this);
         dateInput.setSingleLine(true);
         dateInput.setText(existing != null ? existing.logDate : defaultDate.toString());
@@ -1672,51 +1761,133 @@ public class MainActivity extends Activity {
         dateInput.setTextColor(TEXT);
         dateInput.setHintTextColor(MUTED);
         dateInput.setTextSize(15);
+
+        LinearLayout breedSection = vertical();
+        breedSection.addView(text("Breeds and quantities. Manage breeds in Settings.", 12, MUTED, false));
+        addSpace(breedSection, 4);
+        breedSection.addView(entries);
+        if (!existingStatus) {
+            Button addAnother = button("+ Add another breed", () -> {
+                BreedRow next = createBreedRow(rows, entries, breeds);
+                rows.add(next);
+                refreshBreedRows(entries, rows);
+            });
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(40));
+            ap.setMargins(0, dp(6), 0, 0);
+            breedSection.addView(addAnother, ap);
+        }
+
+        final List<EggCodeInfo> activeCodes = db.activeEggCodes(existingStatus ? existing.createdAt : -1);
+        final List<EggCodeInfo> selectedCodes = new ArrayList<>();
+        if (existingStatus) selectedCodes.addAll(db.codesLinkedToLog(existing.createdAt));
+
+        LinearLayout codeSection = vertical();
+        codeSection.addView(text("Find an egg code", 12, MUTED, true));
+        codeSection.addView(text("Search by full code or number. Only eggs currently in incubation and without an outcome are listed.", 12, MUTED, false));
+        final AutoCompleteTextView codeSearch = new AutoCompleteTextView(this);
+        codeSearch.setHint("e.g. S0001 or 0001");
+        codeSearch.setSingleLine(true);
+        codeSearch.setThreshold(1);
+        codeSearch.setTextColor(TEXT);
+        codeSearch.setHintTextColor(MUTED);
+        codeSearch.setTextSize(15);
+        final String[] codeLabels = new String[activeCodes.size()];
+        for (int i = 0; i < activeCodes.size(); i++) codeLabels[i] = eggCodeLabel(activeCodes.get(i));
+        codeSearch.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_dropdown_item_1line, codeLabels));
+        codeSection.addView(codeSearch);
+
+        final LinearLayout selectedContainer = new LinearLayout(this);
+        selectedContainer.setOrientation(LinearLayout.VERTICAL);
+        selectedContainer.setPadding(0, dp(2), 0, 0);
+        final TextView emptyCodes = text("No egg codes selected.", 12, MUTED, false);
+        final Runnable[] refreshCodes = new Runnable[1];
+        refreshCodes[0] = () -> {
+            selectedContainer.removeAllViews();
+            emptyCodes.setVisibility(selectedCodes.isEmpty() ? View.VISIBLE : View.GONE);
+            for (EggCodeInfo code : selectedCodes) {
+                selectedContainer.addView(selectedCodeRow(code, selectedCodes, refreshCodes[0]));
+            }
+        };
+        refreshCodes[0].run();
+
+        Button addCode = button("Add egg code", () -> {
+            String query = codeSearch.getText().toString().trim();
+            if (query.isEmpty()) return;
+            List<EggCodeInfo> matches = new ArrayList<>();
+            for (EggCodeInfo code : activeCodes) {
+                if (codeSearchMatches(code, query)) matches.add(code);
+            }
+            if (matches.size() == 1) {
+                addSelectedCode(matches.get(0), selectedCodes, refreshCodes[0]);
+                codeSearch.setText("");
+            } else if (matches.isEmpty()) {
+                Toast.makeText(this, "No matching egg code in incubation", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "Multiple eggs match; enter the full code", Toast.LENGTH_LONG).show();
+            }
+        });
+        LinearLayout.LayoutParams addCodeParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40));
+        addCodeParams.setMargins(0, dp(6), 0, 0);
+        codeSection.addView(addCode, addCodeParams);
+
+        codeSection.addView(text("Selected eggs", 12, MUTED, true));
+        codeSection.addView(selectedContainer);
+        codeSection.addView(emptyCodes);
+        if (activeCodes.isEmpty()) {
+            codeSection.addView(text("No eggs are currently in incubation. Start an incubation log first.", 12, MUTED, false));
+        }
+
+        codeSearch.setOnItemClickListener((parent, view, position, id) -> {
+            Object item = parent.getItemAtPosition(position);
+            if (item == null) return;
+            String selectedLabel = item.toString();
+            for (EggCodeInfo code : activeCodes) {
+                if (eggCodeLabel(code).equals(selectedLabel)) {
+                    addSelectedCode(code, selectedCodes, refreshCodes[0]);
+                    codeSearch.setText("");
+                    return;
+                }
+            }
+        });
+
+        final String[] selectedKind = { existing != null ? existing.kind : KIND_STARTED };
+        final Runnable updateInput = () -> {
+            boolean codeMode = !KIND_STARTED.equals(selectedKind[0]);
+            breedSection.setVisibility(codeMode ? View.GONE : View.VISIBLE);
+            codeSection.setVisibility(codeMode ? View.VISIBLE : View.GONE);
+        };
+
+        LinearLayout box = vertical();
+        box.addView(text("Log date (YYYY-MM-DD)", 12, MUTED, true));
         box.addView(dateInput);
         box.addView(text("Defaults to the selected calendar date. Edit it for a past date; the time uses the device clock when you save.", 12, MUTED, false));
         addSpace(box, 6);
 
-        final String[] selectedKind = { existing != null ? existing.kind : KIND_STARTED };
         box.addView(text("Status", 12, MUTED, true));
-        final Button kindButton = button(selectedKind[0], () -> { });
-        kindButton.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-        kindButton.setOnClickListener(v -> pickHatchKind(selectedKind, kindButton));
-        box.addView(kindButton, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
-        addSpace(box, 6);
-
-        box.addView(text("Breeds and quantities. Manage breeds in Settings.", 12, MUTED, false));
-        addSpace(box, 4);
-        box.addView(entries);
-
-        if (existing != null) {
-            for (SessionItem item : existing.items) {
-                EggType breed = findBreed(breeds, item.name);
-                if (breed == null) {
-                    breed = new EggType(0, item.name, item.color);
-                    breeds.add(breed);
-                }
-                BreedRow row = createBreedRow(rows, entries, breeds);
-                row.breed = breed;
-                updateBreedRow(row);
-                row.qty.setText(String.valueOf(item.count));
-                rows.add(row);
-            }
+        if (existingStarted) {
+            Button fixedKind = button(selectedKind[0], () -> { });
+            fixedKind.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            fixedKind.setEnabled(false);
+            box.addView(fixedKind, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
+            box.addView(text("Report failed, successful, or aborted outcomes as separate logs using an egg code.", 12, MUTED, false));
         } else {
-            BreedRow first = createBreedRow(rows, entries, breeds);
-            rows.add(first);
+            final Button kindButton = button(selectedKind[0], () -> { });
+            kindButton.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            kindButton.setOnClickListener(v -> {
+                if (existingStatus) pickHatchStatusKind(selectedKind, kindButton, updateInput);
+                else pickHatchKind(selectedKind, kindButton, updateInput);
+            });
+            box.addView(kindButton, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
         }
-        refreshBreedRows(entries, rows);
-
-        Button addAnother = button("+ Add another breed", () -> {
-            BreedRow next = createBreedRow(rows, entries, breeds);
-            rows.add(next);
-            refreshBreedRows(entries, rows);
-        });
-        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(40));
-        ap.setMargins(0, dp(6), 0, 0);
-        box.addView(addAnother, ap);
+        addSpace(box, 6);
+        box.addView(breedSection);
+        box.addView(codeSection);
+        updateInput.run();
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(existing == null ? "Log incubation" : "Edit incubation log")
@@ -1746,60 +1917,141 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                Map<String, NewEntry> merged = new LinkedHashMap<>();
-                for (BreedRow row : rows) {
-                    if (row.breed == null) continue;
-                    int qty;
-                    try {
-                        qty = Integer.parseInt(row.qty.getText().toString().trim());
-                    } catch (NumberFormatException e) {
-                        Toast.makeText(this, "Enter a quantity from 0 to 10000", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    if (qty < 0 || qty > 10000) {
-                        Toast.makeText(this, "Enter a quantity from 0 to 10000", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    if (qty == 0) continue;
-                    String key = row.breed.name.toLowerCase(Locale.ROOT);
-                    NewEntry found = merged.get(key);
-                    if (found == null) {
-                        merged.put(key, new NewEntry(row.breed.name, row.breed.color, qty));
-                    } else {
-                        found.count += qty;
-                    }
-                }
-
-                if (merged.isEmpty() && existing == null) {
-                    Toast.makeText(this, "Add at least one breed", Toast.LENGTH_LONG).show();
-                    return;
-                }
-
-                List<NewEntry> toSave = new ArrayList<>(merged.values());
+                String kind = selectedKind[0];
                 long createdAt = existing != null ? existing.createdAt : System.currentTimeMillis();
-                db.saveHatchLog(createdAt, logDate, selectedKind[0], toSave, existing);
-                dialog.dismiss();
-                selectedDate = logDate;
-                anchorDate = logDate;
-                render();
-                if (toSave.isEmpty()) {
-                    Toast.makeText(this, "Log removed", Toast.LENGTH_SHORT).show();
+                if (KIND_STARTED.equals(kind)) {
+                    if (existingStatus) {
+                        Toast.makeText(this, "Outcome logs cannot be changed back to started", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+
+                    Map<String, NewEntry> merged = new LinkedHashMap<>();
+                    for (BreedRow row : rows) {
+                        if (row.breed == null) continue;
+                        int qty;
+                        try {
+                            qty = Integer.parseInt(row.qty.getText().toString().trim());
+                        } catch (NumberFormatException e) {
+                            Toast.makeText(this, "Enter a quantity from 0 to 10000", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        if (qty < 0 || qty > 10000) {
+                            Toast.makeText(this, "Enter a quantity from 0 to 10000", Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        if (qty == 0) continue;
+                        String key = row.breed.name.toLowerCase(Locale.ROOT);
+                        NewEntry found = merged.get(key);
+                        if (found == null) {
+                            merged.put(key, new NewEntry(row.breed.name, row.breed.color, qty));
+                        } else {
+                            found.count += qty;
+                        }
+                    }
+                    if (merged.isEmpty() && existing == null) {
+                        Toast.makeText(this, "Add at least one breed", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+
+                    List<NewEntry> toSave = new ArrayList<>(merged.values());
+                    db.saveHatchLog(createdAt, logDate, KIND_STARTED, toSave, existingStarted ? existing : null);
+                    dialog.dismiss();
+                    selectedDate = logDate;
+                    anchorDate = logDate;
+                    render();
+                    if (toSave.isEmpty()) {
+                        Toast.makeText(this, "Log removed", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, existing == null ? "Incubation log saved" : "Incubation log updated", Toast.LENGTH_SHORT).show();
+                    }
                 } else {
-                    Toast.makeText(this, existing == null ? "Incubation log saved" : "Incubation log updated", Toast.LENGTH_SHORT).show();
+                    if (selectedCodes.isEmpty()) {
+                        Toast.makeText(this, "Select at least one egg code", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    db.saveStatusLog(createdAt, logDate, kind, selectedCodes, existingStatus ? existing : null);
+                    dialog.dismiss();
+                    selectedDate = logDate;
+                    anchorDate = logDate;
+                    render();
+                    Toast.makeText(this, existing == null ? "Incubation outcome saved" : "Incubation log updated", Toast.LENGTH_SHORT).show();
                 }
             });
         });
         dialog.show();
     }
 
+    private String eggCodeLabel(EggCodeInfo code) {
+        return code.code + "  ·  " + code.breedName;
+    }
+
+    private boolean codeSearchMatches(EggCodeInfo code, String query) {
+        String q = query.trim();
+        if (q.isEmpty()) return false;
+        String upper = q.toUpperCase(Locale.ROOT);
+        String codeUpper = code.code.toUpperCase(Locale.ROOT);
+        if (codeUpper.equals(upper)) return true;
+        if (codeUpper.startsWith(upper)) return true;
+        String digits = code.code.length() > 1 ? code.code.substring(1) : "";
+        return digits.equals(q);
+    }
+
+    private void addSelectedCode(EggCodeInfo code, List<EggCodeInfo> selected, Runnable refresh) {
+        for (EggCodeInfo existing : selected) {
+            if (existing.id == code.id) {
+                Toast.makeText(this, "That egg code is already selected", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+        selected.add(code);
+        refresh.run();
+    }
+
+    private View selectedCodeRow(final EggCodeInfo code, final List<EggCodeInfo> selected,
+                                 final Runnable refresh) {
+        LinearLayout row = horizontal();
+        row.setPadding(0, dp(3), 0, dp(3));
+
+        View egg = new View(this);
+        egg.setBackground(eggShape(code.color));
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(dp(18), dp(24));
+        ep.setMargins(0, 0, dp(8), 0);
+        row.addView(egg, ep);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(0, 0, 0, 0);
+        TextView codeView = text(code.code, 14, TEXT, true);
+        codeView.setTypeface(Typeface.MONOSPACE);
+        labels.addView(codeView);
+        labels.addView(text(code.breedName, 11, MUTED, false));
+        row.addView(labels, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        Button remove = button("×", () -> {
+            for (int i = 0; i < selected.size(); i++) {
+                if (selected.get(i).id == code.id) {
+                    selected.remove(i);
+                    break;
+                }
+            }
+            refresh.run();
+        });
+        remove.setTextSize(18);
+        remove.setPadding(0, 0, 0, 0);
+        row.addView(remove, new LinearLayout.LayoutParams(dp(36), dp(40)));
+        return row;
+    }
+
     private class EggDb extends SQLiteOpenHelper {
-        EggDb() { super(MainActivity.this, "egg_counter.db", null, 4); }
+        EggDb() { super(MainActivity.this, "egg_counter.db", null, 6); }
 
         @Override public void onCreate(SQLiteDatabase d) {
             d.execSQL("CREATE TABLE egg_types (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE, color INTEGER NOT NULL)");
             d.execSQL("CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_date TEXT NOT NULL, egg_count INTEGER NOT NULL CHECK(egg_count > 0), created_at INTEGER NOT NULL, egg_type_id INTEGER)");
             d.execSQL("CREATE INDEX idx_sessions_date ON sessions(collection_date)");
             createHatchTable(d);
+            createHatchEggTable(d);
         }
 
         @Override public void onUpgrade(SQLiteDatabase d, int oldVersion, int newVersion) {
@@ -1810,11 +2062,158 @@ public class MainActivity extends Activity {
             if (oldVersion < 4) {
                 createHatchTable(d);
             }
+            if (oldVersion < 5) {
+                createHatchEggTable(d);
+                backfillEggCodes(d);
+            }
+            if (oldVersion < 6) {
+                addColumnIfMissing(d, "hatch_logs", "egg_code_id", "INTEGER");
+                addColumnIfMissing(d, "hatch_eggs", "status", "TEXT NOT NULL DEFAULT 'Incubation started'");
+                addColumnIfMissing(d, "hatch_eggs", "status_log_created_at", "INTEGER");
+            }
         }
 
         private void createHatchTable(SQLiteDatabase d) {
-            d.execSQL("CREATE TABLE IF NOT EXISTS hatch_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, log_date TEXT NOT NULL, created_at INTEGER NOT NULL, kind TEXT NOT NULL, egg_type_id INTEGER, egg_count INTEGER NOT NULL CHECK(egg_count > 0))");
+            d.execSQL("CREATE TABLE IF NOT EXISTS hatch_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, log_date TEXT NOT NULL, created_at INTEGER NOT NULL, kind TEXT NOT NULL, egg_type_id INTEGER, egg_count INTEGER NOT NULL CHECK(egg_count > 0), egg_code_id INTEGER)");
             d.execSQL("CREATE INDEX IF NOT EXISTS idx_hatch_logs_date ON hatch_logs(log_date)");
+        }
+
+        private void createHatchEggTable(SQLiteDatabase d) {
+            d.execSQL("CREATE TABLE IF NOT EXISTS hatch_eggs (id INTEGER PRIMARY KEY AUTOINCREMENT, log_created_at INTEGER NOT NULL, egg_type_id INTEGER NOT NULL, code TEXT NOT NULL UNIQUE, number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'Incubation started', status_log_created_at INTEGER, UNIQUE(egg_type_id, number))");
+            d.execSQL("CREATE INDEX IF NOT EXISTS idx_hatch_eggs_log ON hatch_eggs(log_created_at)");
+        }
+
+        private void addColumnIfMissing(SQLiteDatabase d, String table, String column, String definition) {
+            Cursor c = d.rawQuery("PRAGMA table_info(" + table + ")", null);
+            boolean found = false;
+            try {
+                int nameIndex = c.getColumnIndex("name");
+                while (c.moveToNext()) {
+                    if (column.equalsIgnoreCase(c.getString(nameIndex))) {
+                        found = true;
+                        break;
+                    }
+                }
+            } finally { c.close(); }
+            if (!found) d.execSQL("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        }
+
+        private void backfillEggCodes(SQLiteDatabase d) {
+            Cursor existing = d.rawQuery("SELECT COUNT(*) FROM hatch_eggs", null);
+            try {
+                existing.moveToFirst();
+                if (existing.getLong(0) > 0) return;
+            } finally { existing.close(); }
+
+            List<long[]> rows = new ArrayList<>();
+            List<String> names = new ArrayList<>();
+            Cursor c = d.rawQuery(
+                    "SELECT h.created_at, h.egg_type_id, t.name, SUM(h.egg_count) "
+                            + "FROM hatch_logs h JOIN egg_types t ON t.id = h.egg_type_id "
+                            + "WHERE h.kind = ? GROUP BY h.created_at, h.egg_type_id, t.name "
+                            + "ORDER BY h.created_at, h.id",
+                    new String[]{KIND_STARTED});
+            try {
+                while (c.moveToNext()) {
+                    rows.add(new long[]{c.getLong(0), c.getLong(1), c.getLong(3)});
+                    names.add(c.getString(2));
+                }
+            } finally { c.close(); }
+
+            for (int i = 0; i < rows.size(); i++) {
+                long[] row = rows.get(i);
+                for (long n = 0; n < row[2]; n++) {
+                    insertEggCode(d, row[0], row[1], names.get(i));
+                }
+            }
+        }
+
+        private class CodeRow {
+            final long id;
+            final String code;
+            CodeRow(long id, String code) { this.id = id; this.code = code; }
+        }
+
+        private List<CodeRow> codesFor(SQLiteDatabase d, long createdAt, long typeId) {
+            List<CodeRow> out = new ArrayList<>();
+            Cursor c = d.rawQuery(
+                    "SELECT id, code FROM hatch_eggs WHERE log_created_at = ? AND egg_type_id = ? ORDER BY number",
+                    new String[]{String.valueOf(createdAt), String.valueOf(typeId)});
+            try {
+                while (c.moveToNext()) out.add(new CodeRow(c.getLong(0), c.getString(1)));
+            } finally { c.close(); }
+            return out;
+        }
+
+        List<EggCodeInfo> activeEggCodes(long includeLogCreatedAt) {
+            return queryEggCodes(
+                    "WHERE e.status = ? OR e.status_log_created_at = ?",
+                    new String[]{KIND_STARTED, String.valueOf(includeLogCreatedAt)});
+        }
+
+        List<EggCodeInfo> codesLinkedToLog(long createdAt) {
+            return queryEggCodes(
+                    "WHERE e.status_log_created_at = ?",
+                    new String[]{String.valueOf(createdAt)});
+        }
+
+        private List<EggCodeInfo> queryEggCodes(String where, String[] args) {
+            List<EggCodeInfo> out = new ArrayList<>();
+            String sql = "SELECT e.id, e.code, e.egg_type_id, t.name, t.color, e.status "
+                    + "FROM hatch_eggs e JOIN egg_types t ON t.id = e.egg_type_id "
+                    + where + " ORDER BY e.code";
+            Cursor c = getReadableDatabase().rawQuery(sql, args);
+            try {
+                while (c.moveToNext()) {
+                    out.add(new EggCodeInfo(c.getLong(0), c.getString(1), c.getLong(2),
+                            c.getString(3), c.getInt(4), c.getString(5)));
+                }
+            } finally { c.close(); }
+            return out;
+        }
+
+        private void insertEggCode(SQLiteDatabase d, long createdAt, long typeId, String breedName) {
+            String trimmed = breedName == null ? "" : breedName.trim();
+            char prefix = trimmed.isEmpty() ? 'X' : Character.toUpperCase(trimmed.charAt(0));
+            if (!Character.isLetter(prefix)) prefix = 'X';
+
+            int number;
+            Cursor c = d.rawQuery(
+                    "SELECT COALESCE(MAX(number),0) FROM hatch_eggs WHERE egg_type_id = ?",
+                    new String[]{String.valueOf(typeId)});
+            try {
+                c.moveToFirst();
+                number = c.getInt(0) + 1;
+            } finally { c.close(); }
+            if (number < 1 || number > 9999) number = 1;
+
+            for (int attempt = 0; attempt < 10000; attempt++) {
+                String code = String.format(Locale.ROOT, "%c%04d", prefix, number);
+                Cursor check = d.rawQuery(
+                        "SELECT 1 FROM hatch_eggs WHERE code = ? OR (egg_type_id = ? AND number = ?) LIMIT 1",
+                        new String[]{code, String.valueOf(typeId), String.valueOf(number)});
+                boolean used;
+                try { used = check.moveToFirst(); } finally { check.close(); }
+                if (!used) {
+                    ContentValues v = new ContentValues();
+                    v.put("log_created_at", createdAt);
+                    v.put("egg_type_id", typeId);
+                    v.put("code", code);
+                    v.put("number", number);
+                    v.put("status", KIND_STARTED);
+                    v.putNull("status_log_created_at");
+                    d.insertOrThrow("hatch_eggs", null, v);
+                    return;
+                }
+                number = number % 9999 + 1;
+            }
+            throw new IllegalStateException("No egg codes available");
+        }
+
+        private void deleteEggCode(SQLiteDatabase d, long codeId) {
+            String id = String.valueOf(codeId);
+            d.delete("hatch_logs", "egg_code_id = ?", new String[]{id});
+            d.delete("hatch_eggs", "id = ?", new String[]{id});
         }
 
         List<EggType> eggTypes() {
@@ -1869,6 +2268,7 @@ public class MainActivity extends Activity {
                 String[] args = new String[]{String.valueOf(id)};
                 d.delete("sessions", "egg_type_id = ?", args);
                 d.delete("hatch_logs", "egg_type_id = ?", args);
+                d.delete("hatch_eggs", "egg_type_id = ?", args);
                 d.delete("egg_types", "id = ?", args);
                 d.setTransactionSuccessful();
             } finally {
@@ -2031,6 +2431,7 @@ public class MainActivity extends Activity {
             try {
                 d.delete("sessions", null, null);
                 d.delete("hatch_logs", null, null);
+                d.delete("hatch_eggs", null, null);
                 d.setTransactionSuccessful();
             } finally {
                 d.endTransaction();
@@ -2042,13 +2443,26 @@ public class MainActivity extends Activity {
             SQLiteDatabase d = getWritableDatabase();
             d.beginTransaction();
             try {
+                List<Long> oldTypeIds = new ArrayList<>();
                 if (existing != null) {
+                    Cursor c = d.rawQuery(
+                            "SELECT DISTINCT egg_type_id FROM hatch_logs WHERE created_at = ?",
+                            new String[]{String.valueOf(createdAt)});
+                    try {
+                        while (c.moveToNext()) {
+                            if (!c.isNull(0)) oldTypeIds.add(c.getLong(0));
+                        }
+                    } finally { c.close(); }
                     for (SessionItem item : existing.items) {
                         d.delete("hatch_logs", "id = ?", new String[]{String.valueOf(item.id)});
                     }
                 }
+
+                List<Long> newTypeIds = new ArrayList<>();
                 for (NewEntry entry : entries) {
                     long typeId = upsertType(d, entry.name, entry.color);
+                    if (!newTypeIds.contains(typeId)) newTypeIds.add(typeId);
+
                     ContentValues v = new ContentValues();
                     v.put("log_date", logDate.toString());
                     v.put("created_at", createdAt);
@@ -2056,6 +2470,78 @@ public class MainActivity extends Activity {
                     v.put("egg_type_id", typeId);
                     v.put("egg_count", entry.count);
                     d.insertOrThrow("hatch_logs", null, v);
+
+                    List<CodeRow> codes = codesFor(d, createdAt, typeId);
+                    boolean shouldHaveCodes = KIND_STARTED.equals(kind) || !codes.isEmpty();
+                    if (shouldHaveCodes) {
+                        int keep = (int) Math.min(entry.count, codes.size());
+                        for (int i = keep; i < codes.size(); i++) {
+                            deleteEggCode(d, codes.get(i).id);
+                        }
+                        for (int i = codes.size(); i < entry.count; i++) {
+                            insertEggCode(d, createdAt, typeId, entry.name);
+                        }
+                    }
+                }
+
+                for (Long oldId : oldTypeIds) {
+                    if (!newTypeIds.contains(oldId)) {
+                        List<Long> oldCodeIds = new ArrayList<>();
+                        Cursor cc = d.rawQuery(
+                                "SELECT id FROM hatch_eggs WHERE log_created_at = ? AND egg_type_id = ?",
+                                new String[]{String.valueOf(createdAt), String.valueOf(oldId)});
+                        try {
+                            while (cc.moveToNext()) oldCodeIds.add(cc.getLong(0));
+                        } finally { cc.close(); }
+                        for (Long codeId : oldCodeIds) deleteEggCode(d, codeId);
+                    }
+                }
+                d.setTransactionSuccessful();
+            } finally {
+                d.endTransaction();
+            }
+        }
+
+        void saveStatusLog(long createdAt, LocalDate logDate, String kind,
+                           List<EggCodeInfo> codes, HatchGroup existing) {
+            SQLiteDatabase d = getWritableDatabase();
+            d.beginTransaction();
+            try {
+                if (existing != null) {
+                    ContentValues release = new ContentValues();
+                    release.put("status", KIND_STARTED);
+                    release.putNull("status_log_created_at");
+                    d.update("hatch_eggs", release, "status_log_created_at = ?",
+                            new String[]{String.valueOf(createdAt)});
+                    for (SessionItem item : existing.items) {
+                        d.delete("hatch_logs", "id = ?", new String[]{String.valueOf(item.id)});
+                    }
+                }
+
+                for (EggCodeInfo code : codes) {
+                    Cursor c = d.rawQuery(
+                            "SELECT status FROM hatch_eggs WHERE id = ?",
+                            new String[]{String.valueOf(code.id)});
+                    boolean available;
+                    try {
+                        available = c.moveToFirst() && KIND_STARTED.equals(c.getString(0));
+                    } finally { c.close(); }
+                    if (!available) continue;
+
+                    ContentValues v = new ContentValues();
+                    v.put("log_date", logDate.toString());
+                    v.put("created_at", createdAt);
+                    v.put("kind", kind);
+                    v.put("egg_type_id", code.breedId);
+                    v.put("egg_count", 1);
+                    v.put("egg_code_id", code.id);
+                    d.insertOrThrow("hatch_logs", null, v);
+
+                    ContentValues update = new ContentValues();
+                    update.put("status", kind);
+                    update.put("status_log_created_at", createdAt);
+                    d.update("hatch_eggs", update, "id = ?",
+                            new String[]{String.valueOf(code.id)});
                 }
                 d.setTransactionSuccessful();
             } finally {
@@ -2067,6 +2553,26 @@ public class MainActivity extends Activity {
             SQLiteDatabase d = getWritableDatabase();
             d.beginTransaction();
             try {
+                if (group.isCodeLog()) {
+                    ContentValues release = new ContentValues();
+                    release.put("status", KIND_STARTED);
+                    release.putNull("status_log_created_at");
+                    d.update("hatch_eggs", release, "status_log_created_at = ?",
+                            new String[]{String.valueOf(group.createdAt)});
+                } else {
+                    List<Long> codeIds = new ArrayList<>();
+                    Cursor c = d.rawQuery(
+                            "SELECT id FROM hatch_eggs WHERE log_created_at = ?",
+                            new String[]{String.valueOf(group.createdAt)});
+                    try {
+                        while (c.moveToNext()) codeIds.add(c.getLong(0));
+                    } finally { c.close(); }
+                    for (Long codeId : codeIds) {
+                        d.delete("hatch_logs", "egg_code_id = ?", new String[]{String.valueOf(codeId)});
+                    }
+                    d.delete("hatch_eggs", "log_created_at = ?",
+                            new String[]{String.valueOf(group.createdAt)});
+                }
                 for (SessionItem item : group.items) {
                     d.delete("hatch_logs", "id = ?", new String[]{String.valueOf(item.id)});
                 }
@@ -2141,7 +2647,7 @@ public class MainActivity extends Activity {
 
         List<HatchGroup> hatchLogsFor(LocalDate date) {
             String sql = "SELECT h.id, h.egg_count, h.created_at, h.log_date, h.kind, "
-                    + "COALESCE(t.name, 'Eggs'), COALESCE(t.color, " + LEGACY_COLOR + ") "
+                    + "COALESCE(t.name, 'Eggs'), COALESCE(t.color, " + LEGACY_COLOR + "), h.egg_code_id "
                     + "FROM hatch_logs h LEFT JOIN egg_types t ON t.id = h.egg_type_id "
                     + "WHERE h.log_date = ? ORDER BY h.created_at, h.id";
             LinkedHashMap<Long, HatchGroup> groups = new LinkedHashMap<>();
@@ -2154,9 +2660,40 @@ public class MainActivity extends Activity {
                         group = new HatchGroup(createdAt, c.getString(3), c.getString(4));
                         groups.put(createdAt, group);
                     }
-                    group.items.add(new SessionItem(c.getLong(0), c.getString(5), c.getInt(6), c.getLong(1)));
+                    group.items.add(new SessionItem(c.getLong(0), c.getString(5), c.getInt(6), c.getLong(1), c.getLong(7)));
                 }
             } finally { c.close(); }
+
+            Cursor linked = getReadableDatabase().rawQuery(
+                    "SELECT h.created_at, e.code FROM hatch_logs h "
+                            + "JOIN hatch_eggs e ON e.id = h.egg_code_id "
+                            + "WHERE h.log_date = ? ORDER BY h.id",
+                    new String[]{date.toString()});
+            try {
+                while (linked.moveToNext()) {
+                    HatchGroup group = groups.get(linked.getLong(0));
+                    if (group != null) {
+                        String code = linked.getString(1);
+                        if (!group.codes.contains(code)) group.codes.add(code);
+                    }
+                }
+            } finally { linked.close(); }
+
+            Cursor generated = getReadableDatabase().rawQuery(
+                    "SELECT e.log_created_at, e.code FROM hatch_eggs e "
+                            + "WHERE EXISTS (SELECT 1 FROM hatch_logs h WHERE h.created_at = e.log_created_at "
+                            + "AND h.egg_type_id = e.egg_type_id AND h.log_date = ? AND h.kind = ?) "
+                            + "ORDER BY e.id",
+                    new String[]{date.toString(), KIND_STARTED});
+            try {
+                while (generated.moveToNext()) {
+                    HatchGroup group = groups.get(generated.getLong(0));
+                    if (group != null) {
+                        String code = generated.getString(1);
+                        if (!group.codes.contains(code)) group.codes.add(code);
+                    }
+                }
+            } finally { generated.close(); }
             return new ArrayList<>(groups.values());
         }
     }
